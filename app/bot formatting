@@ -1,0 +1,29 @@
+from typing import Dict, Any
+
+def format_report_for_telegram(d: Dict[str, Any]) -> str:
+    t = (d.get("token") or {})
+    name  = t.get("name") or "?"
+    sym   = t.get("symbol") or "?"
+    addr  = t.get("address") or d.get("address") or "?"
+    title = f"{sym} ({name})" if name != "?" or sym != "?" else (addr[:6] + "…" + addr[-4:] if addr.startswith("0x") and len(addr) > 10 else addr)
+
+    band = (d.get("band") or "").lower()
+    band_badge = {"safe":"🟢 safe","caution":"🟠 caution","high":"🔴 high"}.get(band,"⚪ unknown")
+    score = d.get("score")
+    score_txt = f"{score:.1f}" if isinstance(score,(int,float)) else "?"
+
+    def em(sig: float) -> str:
+        return "🔴" if sig <= -0.5 else ("🟢" if sig >= 0.5 else "⚪")
+
+    lines = []
+    for f in (d.get("factors") or [])[:8]:
+        label = (f.get("label") or (f.get("id") or "").replace("_"," ").capitalize() or "Unknown")
+        reason = (f.get("evidence") or [""])[0]
+        lines.append(f"{em(f.get('signal',0))} {label} — {reason}")
+
+    verdict = d.get("verdict") or ""
+    return (
+        f"{title}\n{verdict}\n\n"
+        f"Score: {score_txt}  •  Band: {band_badge}\n\n"
+        "Key factors:\n" + "\n".join(lines)
+    )
