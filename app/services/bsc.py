@@ -1,8 +1,7 @@
 import os
-import random
 import requests
 from dataclasses import dataclass, asdict
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
 
 # ============================================================
 # CONFIG
@@ -33,8 +32,7 @@ class AnalysisResult:
     chain: str
     factors: List[RiskFactor]
 
-    def model_dump(self):
-        """FastAPI-friendly dict serializer."""
+    def model_dump(self) -> Dict[str, Any]:
         return {
             "address": self.address,
             "score": self.score,
@@ -45,60 +43,38 @@ class AnalysisResult:
 
 
 # ============================================================
-# MOCK FACTORS (Temporary placeholder logic)
+# MOCK FACTORS (temporary)
 # ============================================================
 
 def mock_factors(addr: str) -> List[RiskFactor]:
-    """
-    Temporary/mock factor builder so we can test end-to-end even if
-    live BscScan lookups are rate-limited or not wired yet.
-    """
-
     base = [
-        # id,               weight, signal, evidence(list[str])
-        ("ownership",           0.25,   0,  ["Owner unknown (ABI/owner() not available)"]),
-        ("mint_blacklist",      0.20,   0,  ["ABI unavailable"]),
-        ("liquidity_lock",      0.20,  -1,  ["LP locked 0.0% via Burned LP"]),
-        ("holder_concentration",0.15,  -1,  ["Top10 holders unknown (API limit)"]),
-        ("dev_history",         0.10,   1,  ["No known rugs linked"]),
-        ("tax_honeypot",        0.05,   0,  ["ABI unavailable"]),
-        ("market_integrity",    0.05,   1,  ["Pancake v2 pair found: 0x0eD7e52944161450477ee417DE9Cd3a859b14fD0"]),
+        ("ownership",            0.25,  0,  ["Owner unknown (ABI/owner() not available)"]),
+        ("mint_blacklist",       0.20,  0,  ["ABI unavailable"]),
+        ("liquidity_lock",       0.20, -1,  ["LP locked 0.0% via Burned LP"]),
+        ("holder_concentration", 0.15, -1,  ["Top10 holders unknown (API limit)"]),
+        ("dev_history",          0.10,  1,  ["No known rugs linked"]),
+        ("tax_honeypot",         0.05,  0,  ["ABI unavailable"]),
+        ("market_integrity",     0.05,  1,  ["Pancake v2 pair found: 0x0eD7e52944161450477ee417DE9Cd3a859b14fD0"]),
     ]
 
     factors: List[RiskFactor] = []
     for fid, weight, signal, evidence in base:
-        # impact = weight * (signal * 10), e.g. 0.2 * (-1*10) = -2.0
         impact = round(weight * (signal * 10), 2)
-        factors.append(
-            RiskFactor(
-                id=fid,
-                weight=weight,
-                signal=signal,
-                evidence=evidence,
-                impact=impact,
-            )
-        )
+        factors.append(RiskFactor(id=fid, weight=weight, signal=signal, evidence=evidence, impact=impact))
     return factors
 
 
 # ============================================================
-# MAIN ANALYZER LOGIC
+# MAIN ANALYZER (mock scoring for now)
 # ============================================================
 
 def analyze_bsc(addr: str) -> AnalysisResult:
-    """
-    Analyze a given token address on BSC (mock version).
-    Future versions can call BscScan or web3 RPC here.
-    """
-
-    # Mocked factor evaluation
     factors = mock_factors(addr)
 
-    # Aggregate score
+    # Aggregate mock score, clamp to [0, 10]
     score = sum(f.impact for f in factors)
-    score = max(min(score + 5, 10), 0)  # normalize to 0–10 scale
+    score = max(min(score + 5, 10), 0)
 
-    # Basic verdict mapping
     if score >= 8:
         verdict = "✅ Safe / Trusted"
     elif score >= 5:
@@ -116,15 +92,44 @@ def analyze_bsc(addr: str) -> AnalysisResult:
 
 
 # ============================================================
-# OPTIONAL LIVE LOOKUP HELPERS (Future)
+# LIVE LOOKUP HELPERS (optional)
 # ============================================================
 
+def fetch_abi_from_bscscan(address: str) -> Optional[str]:
+    """
+    Return contract ABI as a JSON string from BscScan, or None if unavailable.
+    Kept to satisfy imports from main.py.
+    """
+    if not BSCSCAN_API_KEY:
+        # No key configured: return None so callers can fall back gracefully.
+        return None
+
+    url = "https://api.bscscan.com/api"
+    params = {
+        "module": "contract",
+        "action": "getabi",
+        "address": address,
+        "apikey": BSCSCAN_API_KEY,
+    }
+    try:
+        r = requests.get(url, params=params, timeout=12)
+        data = r.json()
+        if data.get("status") == "1":
+            # BscScan returns ABI as a JSON string
+            return data.get("result")
+        return None
+    except Exception:
+        return None
+
+
 def get_token_info_from_bscscan(address: str) -> Dict[str, Any]:
-    """Example BscScan call (not required for mock mode)."""
+    """
+    Example BscScan token info call (not used in mock scoring).
+    """
     if not BSCSCAN_API_KEY:
         return {"error": "Missing BSCSCAN_API_KEY"}
 
-    url = f"https://api.bscscan.com/api"
+    url = "https://api.bscscan.com/api"
     params = {
         "module": "token",
         "action": "tokeninfo",
@@ -132,7 +137,7 @@ def get_token_info_from_bscscan(address: str) -> Dict[str, Any]:
         "apikey": BSCSCAN_API_KEY,
     }
     try:
-        r = requests.get(url, params=params, timeout=10)
+        r = requests.get(url, params=params, timeout=12)
         return r.json()
     except Exception as e:
         return {"error": str(e)}
